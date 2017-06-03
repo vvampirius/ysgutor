@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const VERSION float32 = 0.1
+const VERSION float32 = 0.2
 
 type PreStartHandlerFunc func(*Ysgutor) bool
 type StartHandlerFunc func(*Ysgutor)
@@ -80,7 +80,7 @@ func (self *Ysgutor) Execute() {
 	}
 }
 
-func (self *Ysgutor) Terminate() {
+func (self *Ysgutor) Terminate() error {
 	self.terminateMutex.Lock()
 	defer self.terminateMutex.Unlock()
 	if !self.Terminated {
@@ -88,11 +88,19 @@ func (self *Ysgutor) Terminate() {
 			self.Terminated = self.KillHandler(self)
 		} else {
 			if self.Cmd != nil && self.Cmd.ProcessState == nil && self.Cmd.Process != nil {
-				self.Terminated = true
+				if err := self.Cmd.Process.Kill(); err==nil {
+					self.Terminated = true
+				} else {
+					return err
+				}
 			} else {
+				return errors.New("Already exited.")
 			}
 		}
+	} else {
+		return errors.New("Already terminated.")
 	}
+	return nil
 }
 
 func (self *Ysgutor) contextTerminator(ctx context.Context) {
