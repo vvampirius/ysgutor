@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const VERSION float32 = 0.2
+const VERSION float32 = 0.3
 
 type PreStartHandlerFunc func(*Ysgutor) bool
 type StartHandlerFunc func(*Ysgutor)
@@ -77,6 +77,8 @@ func (self *Ysgutor) Execute() {
 				self.OnFail(self, startErr)
 			}
 		}
+		self.terminateMutex.Lock() // waiting if self.Terminate() in process
+		self.terminateMutex.Unlock()
 	}
 }
 
