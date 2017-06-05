@@ -6,38 +6,42 @@ import (
 	"syscall"
 	"time"
 	"os"
+	"context"
 )
 
-func TerminateByPid(pid int, recursive bool, timeout time.Duration, q ...interface{}) bool {
-	timeoutChan := time.After(timeout)
+// q will be syscall.Signal to send signal to pid or time.Duration to wait
+func TerminateByPid(pid int, recursive bool, timeout context.Context, q ...interface{}) bool {
 	childs := make(map[int]bool)
 	if recursive {
 		appendChilds(pid, childs)
 	}
 	exited := false
-	exitChan := make(chan bool, 1)
-	go PidWait(pid, &exited, exitChan)
+	pidWaitContext, pidWaitCancel := context.WithCancel(context.Background())
+	go PidWait(pid, &exited, timeout, pidWaitCancel)
 	for _, v := range q {
+		breakCycle := false
 		if s, ok := v.(syscall.Signal); ok {
 			//fmt.Printf("Sending signal %d to pid %d\n", s, pid)
 			syscall.Kill(pid, s)
 		} else if wait, ok := v.(time.Duration); ok {
 			select {
-				case <-exitChan:
+				case <-pidWaitContext.Done():
 				case <-time.After(wait):
+				case <-timeout.Done():
+					breakCycle = true
 			}
 		} else {
 			fmt.Print("Error value: ")
 			fmt.Println(v)
 		}
-		if exited {
+		if exited || breakCycle {
 			break
 		}
 	}
 	if !exited {
 		select {
-			case <-exitChan:
-			case <-timeoutChan:
+			case <-pidWaitContext.Done():
+			case <-timeout.Done():
 		}
 	}
 	if recursive {
@@ -60,18 +64,30 @@ func appendChilds(parentPid int, childs map[int]bool) {
 	}
 }
 
-func PidWait(pid int, exited *bool, exitChan chan<- bool) {
-	for {
-		if p, err := os.FindProcess(pid); err == nil {
-			if errr := p.Signal(syscall.Signal(0)); errr!=nil {
-				break
+// PidWait check if pid exited, sets exited to true (if exited) and call pidWaitCancel().
+//
+// It use os.FindProcess(pid).Signal(syscall.Signal(0)) to check if process alive. Because with syscall.Wait4() can't
+// check subprocesses of subprocesses.
+func PidWait(pid int, exited *bool, timeout context.Context, pidWaitCancel context.CancelFunc) {
+	cycle := true
+	for cycle {
+		select {
+		default:
+			if p, err := os.FindProcess(pid); err == nil {
+				if errr := p.Signal(syscall.Signal(0)); errr != nil {
+					cycle = false
+					*exited = true
+					pidWaitCancel()
+				}
+				//fmt.Printf("process.Signal on pid %d returned: %v\n", pid, errr)
+			} else {
+				fmt.Println(err.Error())
+				cycle = false
+				*exited = true
+				pidWaitCancel()
 			}
-			//fmt.Printf("process.Signal on pid %d returned: %v\n", pid, errr)
-		} else {
-			fmt.Println(err.Error())
-			break
+		case <-timeout.Done():
+			cycle = false
 		}
 	}
-	*exited = true
-	exitChan <- true
 }
